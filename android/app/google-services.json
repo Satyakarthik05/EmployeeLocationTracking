@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "881025600631",
+    "firebase_url": "https://srimanjunathalocationservices-default-rtdb.firebaseio.com",
+    "project_id": "srimanjunathalocationservices",
+    "storage_bucket": "srimanjunathalocationservices.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:881025600631:android:d72ab823fe63e910ab8a72",
+        "android_client_info": {
+          "package_name": "com.example.employeeloc"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABt2DuXWZ01s90R0tzP6I1QpsFcSSNDcE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
