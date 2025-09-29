@@ -8,6 +8,7 @@ import 'package:cross_file/cross_file.dart';
 import 'dart:io';
 
 import 'trip_tracking_screen.dart';
+import 'LoginScreen.dart';
 
 class EmployeeManagementScreen extends StatefulWidget {
   const EmployeeManagementScreen({Key? key}) : super(key: key);
@@ -102,7 +103,15 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
 
                 Navigator.pop(context);
               },
-              child: Text(isEditing ? "Update" : "Register"),
+              child: Text(
+  isEditing ? "Update" : "Register",
+  style: const TextStyle(
+    color: Colors.white,   // 👈 set your preferred text color
+    fontSize: 16,          // optional: adjust size
+    fontWeight: FontWeight.bold, // optional: bold text
+  ),
+),
+
             )
           ],
         ),
@@ -473,31 +482,50 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
 }
 
   // ======================== UI =========================
-  @override
-  Widget build(BuildContext context) {
-    String dateRangeText = (_selectedStartDate != null && _selectedEndDate != null)
-        ? "${_selectedStartDate!.day.toString().padLeft(2, '0')}-${_selectedStartDate!.month.toString().padLeft(2, '0')}-${_selectedStartDate!.year} to ${_selectedEndDate!.day.toString().padLeft(2, '0')}-${_selectedEndDate!.month.toString().padLeft(2, '0')}-${_selectedEndDate!.year}"
-        : "Select Date Range";
+@override
+Widget build(BuildContext context) {
+  String dateRangeText = (_selectedStartDate != null && _selectedEndDate != null)
+      ? "${_selectedStartDate!.day.toString().padLeft(2, '0')}-${_selectedStartDate!.month.toString().padLeft(2, '0')}-${_selectedStartDate!.year} to ${_selectedEndDate!.day.toString().padLeft(2, '0')}-${_selectedEndDate!.month.toString().padLeft(2, '0')}-${_selectedEndDate!.year}"
+      : "Select Date Range";
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7F7),
-      appBar: AppBar(
-        title: const Text("Employee Management"),
-        backgroundColor: const Color(0xFF2E5D5D),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.download),
-            onPressed: _exportTripsToExcel,
-            tooltip: "Download & Share All Employees Trips",
-          )
-        ],
+  return Scaffold(
+    backgroundColor: const Color(0xFFF5F7F7),
+    appBar: AppBar(
+      title: const Text(
+        "Employee Management",
+        style: TextStyle(
+          color: Colors.white,   // Title text color
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF2E5D5D),
-        onPressed: () => _showEmployeeBottomSheet(),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      backgroundColor: const Color(0xFF2E5D5D),
+      centerTitle: true,
+      actions: [
+        // Logout button
+        IconButton(
+          icon: const Icon(Icons.logout, color: Colors.white),
+          tooltip: 'Logout',
+          onPressed: () {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => LoginScreen()),
+              (route) => false,
+            );
+          },
+        ),
+        // Download button
+        IconButton(
+          icon: const Icon(Icons.download, color: Colors.green),
+          tooltip: "Download & Share All Employees Trips",
+          onPressed: _exportTripsToExcel,
+        ),
+      ],
+    ),
+    floatingActionButton: FloatingActionButton(
+      backgroundColor: const Color(0xFF2E5D5D),
+      onPressed: () => _showEmployeeBottomSheet(),
+      child: const Icon(Icons.add, color: Colors.white),
+    ),
       body: Column(
         children: [
           // Search Bar

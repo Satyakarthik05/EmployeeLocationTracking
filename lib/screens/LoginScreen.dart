@@ -245,30 +245,31 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(color: Colors.white)
-                            : const Text('LOGIN', style: TextStyle(fontSize: 18)),
+                            : const Text('LOGIN', style: TextStyle(fontSize: 18,color: Colors.white, // 👈 change text color here
+              fontWeight: FontWeight.bold,)),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE8F4F4),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFF2E5D5D).withOpacity(0.3)),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Color(0xFF2E5D5D)),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              "Admin? Use 'admin' / 'admin123'",
-                              style: TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    // const SizedBox(height: 12),
+                    // Container(
+                    //   padding: const EdgeInsets.all(12),
+                    //   decoration: BoxDecoration(
+                    //     color: const Color(0xFFFFFFFF),
+                    //     borderRadius: BorderRadius.circular(12),
+                    //     border: Border.all(color: const Color(0xFF2E5D5D).withOpacity(0.3)),
+                    //   ),
+                      // child: const Row(
+                      //   children: [
+                      //     Icon(Icons.info_outline, color: Color(0xFF2E5D5D)),
+                      //     SizedBox(width: 8),
+                      //     Expanded(
+                      //       child: Text(
+                      //         "Admin? Use 'admin' / 'admin123'",
+                      //         style: TextStyle(fontSize: 12),
+                      //       ),
+                      //     ),
+                      //   ],
+                      // ),
+                    // ),
                   ],
                 ),
               ),
