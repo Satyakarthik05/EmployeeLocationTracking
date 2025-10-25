@@ -27,6 +27,7 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
 
   DateTime? _selectedStartDate;
   DateTime? _selectedEndDate;
+  bool _showNonTripEmployees = false; // New state variable
 
   // ======================== REGISTER / EDIT EMPLOYEE =========================
   Future<void> _showEmployeeBottomSheet({DocumentSnapshot? employee}) async {
@@ -104,14 +105,13 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
                 Navigator.pop(context);
               },
               child: Text(
-  isEditing ? "Update" : "Register",
-  style: const TextStyle(
-    color: Colors.white,   // 👈 set your preferred text color
-    fontSize: 16,          // optional: adjust size
-    fontWeight: FontWeight.bold, // optional: bold text
-  ),
-),
-
+                isEditing ? "Update" : "Register",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             )
           ],
         ),
@@ -363,169 +363,241 @@ class _EmployeeManagementScreenState extends State<EmployeeManagementScreen> {
     return empTrips;
   }
 
-  // ======================== EXPORT TO EXCEL & SHARE =========================
-  Future<void> _exportTripsToExcel({String? specificEmpId}) async {
-  if (_selectedStartDate == null || _selectedEndDate == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Please select start and end date first")),
-    );
-    return;
-  }
+  // ======================== GET EMPLOYEES WITHOUT TRIPS TODAY =========================
+  Future<List<DocumentSnapshot>> _getEmployeesWithoutTripsToday() async {
+    final today = DateTime.now();
+    final todayStart = DateTime(today.year, today.month, today.day);
+    final todayEnd = DateTime(today.year, today.month, today.day, 23, 59, 59);
 
-  // Show loading indicator
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => const Center(child: CircularProgressIndicator()),
-  );
-
-  try {
+    // Get all employees
     final employeesSnapshot = await employeesRef.get();
-    final employees = employeesSnapshot.docs;
+    final allEmployees = employeesSnapshot.docs;
 
-    // Step 1: Collect all trip dates across all employees
-    Set<String> allDatesSet = {};
-    Map<String, List<Map<String, dynamic>>> employeeTripsMap = {};
+    // Get all trips from today
+    final tripsRef = FirebaseDatabase.instance.ref().child('trips');
+    final tripsSnapshot = await tripsRef.get();
 
-    for (var emp in employees) {
-      if (specificEmpId != null && emp['employeeId'] != specificEmpId) continue;
+    if (!tripsSnapshot.exists) {
+      return allEmployees; // If no trips exist, all employees haven't started trips
+    }
 
-      final trips = await _getFilteredTrips(emp['employeeId'], _selectedStartDate, _selectedEndDate);
-      if (trips.isEmpty) continue;
+    // Handle different data structures
+    final data = tripsSnapshot.value;
+    List<Map<String, dynamic>> allTrips = [];
 
-      employeeTripsMap[emp['employeeId']] = trips;
+    if (data is Map) {
+      final tripsMap = Map<String, dynamic>.from(data);
+      allTrips = tripsMap.entries.map((entry) {
+        final tripData = Map<String, dynamic>.from(entry.value);
+        tripData['tripId'] = entry.key;
+        return tripData;
+      }).toList();
+    } else if (data is List) {
+      allTrips = List<Map<String, dynamic>>.from(data);
+    }
 
-      for (var trip in trips) {
-        final tripDate = DateTime.tryParse(trip['date']);
-        if (tripDate != null) {
-          final formattedDate = "${tripDate.day.toString().padLeft(2,'0')}-${tripDate.month.toString().padLeft(2,'0')}-${tripDate.year}";
-          allDatesSet.add(formattedDate);
-        }
+    // Get employee IDs who have trips today
+    Set<String> employeesWithTripsToday = {};
+    
+    for (var trip in allTrips) {
+      final tripDateStr = trip['startTime'] ?? '';
+      final tripDate = DateTime.tryParse(tripDateStr);
+      
+      if (tripDate != null && 
+          tripDate.isAfter(todayStart) && 
+          tripDate.isBefore(todayEnd)) {
+        employeesWithTripsToday.add(trip['employeeId'] ?? '');
       }
     }
 
-    if (employeeTripsMap.isEmpty) {
-      Navigator.pop(context); // Remove loading dialog
+    // Filter employees who don't have trips today
+    return allEmployees.where((emp) {
+      return !employeesWithTripsToday.contains(emp['employeeId']);
+    }).toList();
+  }
+
+  // ======================== EXPORT TO EXCEL & SHARE =========================
+  Future<void> _exportTripsToExcel({String? specificEmpId}) async {
+    if (_selectedStartDate == null || _selectedEndDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No trip data found for the selected date range")),
+        const SnackBar(content: Text("Please select start and end date first")),
       );
       return;
     }
 
-    // Step 2: Sort dates
-    List<String> allDates = allDatesSet.toList();
-    allDates.sort((a, b) {
-      final dateA = DateTime.parse(a.split('-').reversed.join('-'));
-      final dateB = DateTime.parse(b.split('-').reversed.join('-'));
-      return dateA.compareTo(dateB);
-    });
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
 
-    // Step 3: Create Excel and header
-    final excelFile = excel.Excel.createExcel();
-    final sheet = excelFile['Trips'];
+    try {
+      final employeesSnapshot = await employeesRef.get();
+      final employees = employeesSnapshot.docs;
 
-    List<String> header = ["Employee ID", "Employee Name"] + allDates + ["Total km"];
-    sheet.appendRow(header);
+      // Step 1: Collect all trip dates across all employees
+      Set<String> allDatesSet = {};
+      Map<String, List<Map<String, dynamic>>> employeeTripsMap = {};
 
-    // Step 4: Fill employee rows
-    for (var emp in employees) {
-      if (!employeeTripsMap.containsKey(emp['employeeId'])) continue;
+      for (var emp in employees) {
+        if (specificEmpId != null && emp['employeeId'] != specificEmpId) continue;
 
-      final trips = employeeTripsMap[emp['employeeId']]!;
-      double totalKm = 0.0;
+        final trips = await _getFilteredTrips(emp['employeeId'], _selectedStartDate, _selectedEndDate);
+        if (trips.isEmpty) continue;
 
-      Map<String, double> dateDistanceMap = {};
-      for (var trip in trips) {
-        final tripDate = DateTime.tryParse(trip['date']);
-        if (tripDate != null) {
-          final formattedDate = "${tripDate.day.toString().padLeft(2,'0')}-${tripDate.month.toString().padLeft(2,'0')}-${tripDate.year}";
-          dateDistanceMap[formattedDate] = (dateDistanceMap[formattedDate] ?? 0) + trip['distance'];
-          totalKm += trip['distance'];
+        employeeTripsMap[emp['employeeId']] = trips;
+
+        for (var trip in trips) {
+          final tripDate = DateTime.tryParse(trip['date']);
+          if (tripDate != null) {
+            final formattedDate = "${tripDate.day.toString().padLeft(2,'0')}-${tripDate.month.toString().padLeft(2,'0')}-${tripDate.year}";
+            allDatesSet.add(formattedDate);
+          }
         }
       }
 
-      List<dynamic> row = [emp['employeeId'], emp['fullname']];
-      for (var date in allDates) {
-        row.add(dateDistanceMap[date]?.toStringAsFixed(2) ?? "0.00");
+      if (employeeTripsMap.isEmpty) {
+        Navigator.pop(context); // Remove loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("No trip data found for the selected date range")),
+        );
+        return;
       }
-      row.add(totalKm.toStringAsFixed(2));
 
-      sheet.appendRow(row);
+      // Step 2: Sort dates
+      List<String> allDates = allDatesSet.toList();
+      allDates.sort((a, b) {
+        final dateA = DateTime.parse(a.split('-').reversed.join('-'));
+        final dateB = DateTime.parse(b.split('-').reversed.join('-'));
+        return dateA.compareTo(dateB);
+      });
+
+      // Step 3: Create Excel and header
+      final excelFile = excel.Excel.createExcel();
+      final sheet = excelFile['Trips'];
+
+      List<String> header = ["Employee ID", "Employee Name"] + allDates + ["Total km"];
+      sheet.appendRow(header);
+
+      // Step 4: Fill employee rows
+      for (var emp in employees) {
+        if (!employeeTripsMap.containsKey(emp['employeeId'])) continue;
+
+        final trips = employeeTripsMap[emp['employeeId']]!;
+        double totalKm = 0.0;
+
+        Map<String, double> dateDistanceMap = {};
+        for (var trip in trips) {
+          final tripDate = DateTime.tryParse(trip['date']);
+          if (tripDate != null) {
+            final formattedDate = "${tripDate.day.toString().padLeft(2,'0')}-${tripDate.month.toString().padLeft(2,'0')}-${tripDate.year}";
+            dateDistanceMap[formattedDate] = (dateDistanceMap[formattedDate] ?? 0) + trip['distance'];
+            totalKm += trip['distance'];
+          }
+        }
+
+        List<dynamic> row = [emp['employeeId'], emp['fullname']];
+        for (var date in allDates) {
+          row.add(dateDistanceMap[date]?.toStringAsFixed(2) ?? "0.00");
+        }
+        row.add(totalKm.toStringAsFixed(2));
+
+        sheet.appendRow(row);
+      }
+
+      // Step 5: Save and share
+      final directory = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = specificEmpId != null
+          ? "Employee_${specificEmpId}_Trips_$timestamp.xlsx"
+          : "All_Employees_Trips_$timestamp.xlsx";
+
+      final file = File("${directory.path}/$fileName");
+      await file.writeAsBytes(excelFile.save()!);
+
+      Navigator.pop(context); // Remove loading dialog
+
+      await Share.shareXFiles([XFile(file.path)],
+          text: specificEmpId != null
+              ? "Trips for Employee $specificEmpId"
+              : "All Employees Trips Report");
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Excel exported successfully!")),
+      );
+    } catch (e) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error exporting Excel: $e")),
+      );
     }
-
-    // Step 5: Save and share
-    final directory = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName = specificEmpId != null
-        ? "Employee_${specificEmpId}_Trips_$timestamp.xlsx"
-        : "All_Employees_Trips_$timestamp.xlsx";
-
-    final file = File("${directory.path}/$fileName");
-    await file.writeAsBytes(excelFile.save()!);
-
-    Navigator.pop(context); // Remove loading dialog
-
-    await Share.shareXFiles([XFile(file.path)],
-        text: specificEmpId != null
-            ? "Trips for Employee $specificEmpId"
-            : "All Employees Trips Report");
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Excel exported successfully!")),
-    );
-  } catch (e) {
-    Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Error exporting Excel: $e")),
-    );
   }
-}
 
   // ======================== UI =========================
-@override
-Widget build(BuildContext context) {
-  String dateRangeText = (_selectedStartDate != null && _selectedEndDate != null)
-      ? "${_selectedStartDate!.day.toString().padLeft(2, '0')}-${_selectedStartDate!.month.toString().padLeft(2, '0')}-${_selectedStartDate!.year} to ${_selectedEndDate!.day.toString().padLeft(2, '0')}-${_selectedEndDate!.month.toString().padLeft(2, '0')}-${_selectedEndDate!.year}"
-      : "Select Date Range";
+  @override
+  Widget build(BuildContext context) {
+    String dateRangeText = (_selectedStartDate != null && _selectedEndDate != null)
+        ? "${_selectedStartDate!.day.toString().padLeft(2, '0')}-${_selectedStartDate!.month.toString().padLeft(2, '0')}-${_selectedStartDate!.year} to ${_selectedEndDate!.day.toString().padLeft(2, '0')}-${_selectedEndDate!.month.toString().padLeft(2, '0')}-${_selectedEndDate!.year}"
+        : "Select Date Range";
 
-  return Scaffold(
-    backgroundColor: const Color(0xFFF5F7F7),
-    appBar: AppBar(
-      title: const Text(
-        "Employee Management",
-        style: TextStyle(
-          color: Colors.white,   // Title text color
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F7F7),
+      appBar: AppBar(
+        title: const Text(
+          "Employee Management",
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
         ),
+        backgroundColor: const Color(0xFF2E5D5D),
+        centerTitle: true,
+        actions: [
+          // Non-trip employees button
+          IconButton(
+            icon: Icon(
+              _showNonTripEmployees ? Icons.people : Icons.people_outline,
+              color: _showNonTripEmployees ? Colors.orange : Colors.white,
+            ),
+            tooltip: 'Show employees without trips today',
+            onPressed: () async {
+              if (_showNonTripEmployees) {
+                setState(() {
+                  _showNonTripEmployees = false;
+                });
+              } else {
+                setState(() {
+                  _showNonTripEmployees = true;
+                });
+              }
+            },
+          ),
+          // Logout button
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white),
+            tooltip: 'Logout',
+            onPressed: () {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => LoginScreen()),
+                (route) => false,
+              );
+            },
+          ),
+          // Download button
+          IconButton(
+            icon: const Icon(Icons.download, color: Colors.green),
+            tooltip: "Download & Share All Employees Trips",
+            onPressed: _exportTripsToExcel,
+          ),
+        ],
       ),
-      backgroundColor: const Color(0xFF2E5D5D),
-      centerTitle: true,
-      actions: [
-        // Logout button
-        IconButton(
-          icon: const Icon(Icons.logout, color: Colors.white),
-          tooltip: 'Logout',
-          onPressed: () {
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => LoginScreen()),
-              (route) => false,
-            );
-          },
-        ),
-        // Download button
-        IconButton(
-          icon: const Icon(Icons.download, color: Colors.green),
-          tooltip: "Download & Share All Employees Trips",
-          onPressed: _exportTripsToExcel,
-        ),
-      ],
-    ),
-    floatingActionButton: FloatingActionButton(
-      backgroundColor: const Color(0xFF2E5D5D),
-      onPressed: () => _showEmployeeBottomSheet(),
-      child: const Icon(Icons.add, color: Colors.white),
-    ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: const Color(0xFF2E5D5D),
+        onPressed: () => _showEmployeeBottomSheet(),
+        child: const Icon(Icons.add, color: Colors.white),
+      ),
       body: Column(
         children: [
           // Search Bar
@@ -580,99 +652,230 @@ Widget build(BuildContext context) {
               ),
             ),
           ),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: employeesRef.snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text("No employees found"));
-                }
-
-                final employees = snapshot.data!.docs.where((emp) {
-                  final fullname = emp['fullname'].toString().toLowerCase();
-                  final empId = emp['employeeId'].toString().toLowerCase();
-                  return fullname.contains(_searchText) ||
-                      empId.contains(_searchText);
-                }).toList();
-
-                if (employees.isEmpty) {
-                  return const Center(
-                      child: Text("No employees match your search"));
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: employees.length,
-                  itemBuilder: (_, index) {
-                    final emp = employees[index];
-                    return Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
+          // Non-trip employees info banner
+          if (_showNonTripEmployees)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info, color: Colors.orange[700]),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      "Showing employees who haven't started trips today (${DateTime.now().day}-${DateTime.now().month}-${DateTime.now().year})",
+                      style: TextStyle(
+                        color: Colors.orange[800],
+                        fontWeight: FontWeight.w500,
                       ),
-                      elevation: 4,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
-                        leading: CircleAvatar(
-                          backgroundColor: const Color(0xFF2E5D5D),
-                          child: Text(
-                            emp['fullname'][0].toUpperCase(),
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                        title: Text(
-                          emp['fullname'],
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        subtitle: Text("ID: ${emp['employeeId']}"),
-                        onTap: () {
-                          _showEmployeeTrips(emp['employeeId'], emp['fullname']);
-                        },
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.download, color: Colors.green),
-                              tooltip: "Download & Share Employee Trips",
-                              onPressed: () {
-                                if (_selectedStartDate == null || _selectedEndDate == null) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text("Please select date range first")),
-                                  );
-                                  return;
-                                }
-                                _exportTripsToExcel(specificEmpId: emp['employeeId']);
-                              },
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.edit,
-                                  color: Colors.blueAccent),
-                              onPressed: () =>
-                                  _showEmployeeBottomSheet(employee: emp),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete,
-                                  color: Colors.redAccent),
-                              onPressed: () => _deleteEmployee(emp.id),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      setState(() {
+                        _showNonTripEmployees = false;
+                      });
+                    },
+                  ),
+                ],
+              ),
             ),
+          Expanded(
+            child: _showNonTripEmployees 
+                ? _buildNonTripEmployeesList()
+                : _buildAllEmployeesList(),
           ),
         ],
       ),
+    );
+  }
+
+  // ======================== BUILD NON-TRIP EMPLOYEES LIST =========================
+  Widget _buildNonTripEmployeesList() {
+    return FutureBuilder<List<DocumentSnapshot>>(
+      future: _getEmployeesWithoutTripsToday(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.celebration, size: 64, color: Colors.green),
+                SizedBox(height: 16),
+                Text(
+                  "All employees have started trips today!",
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final nonTripEmployees = snapshot.data!;
+        final filteredEmployees = nonTripEmployees.where((emp) {
+          final fullname = emp['fullname'].toString().toLowerCase();
+          final empId = emp['employeeId'].toString().toLowerCase();
+          return fullname.contains(_searchText) || empId.contains(_searchText);
+        }).toList();
+
+        if (filteredEmployees.isEmpty) {
+          return const Center(
+              child: Text("No employees match your search"));
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: filteredEmployees.length,
+          itemBuilder: (_, index) {
+            final emp = filteredEmployees[index];
+            return Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              color: Colors.orange[50],
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+                leading: CircleAvatar(
+                  backgroundColor: Colors.orange,
+                  child: Text(
+                    emp['fullname'][0].toUpperCase(),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                title: Text(
+                  emp['fullname'],
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                subtitle: Text("ID: ${emp['employeeId']}"),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blueAccent),
+                      onPressed: () => _showEmployeeBottomSheet(employee: emp),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                      onPressed: () => _deleteEmployee(emp.id),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ======================== BUILD ALL EMPLOYEES LIST =========================
+  Widget _buildAllEmployeesList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: employeesRef.snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const Center(child: Text("No employees found"));
+        }
+
+        final employees = snapshot.data!.docs.where((emp) {
+          final fullname = emp['fullname'].toString().toLowerCase();
+          final empId = emp['employeeId'].toString().toLowerCase();
+          return fullname.contains(_searchText) ||
+              empId.contains(_searchText);
+        }).toList();
+
+        if (employees.isEmpty) {
+          return const Center(
+              child: Text("No employees match your search"));
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: employees.length,
+          itemBuilder: (_, index) {
+            final emp = employees[index];
+            return Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+                leading: CircleAvatar(
+                  backgroundColor: const Color(0xFF2E5D5D),
+                  child: Text(
+                    emp['fullname'][0].toUpperCase(),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                title: Text(
+                  emp['fullname'],
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                subtitle: Text("ID: ${emp['employeeId']}"),
+                onTap: () {
+                  _showEmployeeTrips(emp['employeeId'], emp['fullname']);
+                },
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.download, color: Colors.green),
+                      tooltip: "Download & Share Employee Trips",
+                      onPressed: () {
+                        if (_selectedStartDate == null || _selectedEndDate == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Please select date range first")),
+                          );
+                          return;
+                        }
+                        _exportTripsToExcel(specificEmpId: emp['employeeId']);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blueAccent),
+                      onPressed: () => _showEmployeeBottomSheet(employee: emp),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.redAccent),
+                      onPressed: () => _deleteEmployee(emp.id),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
